@@ -1,8 +1,8 @@
 {
-  "name": "@robertzollner/hypertizen-lichtwand",
-  "appName": "HyperTizen Lichtwand",
-  "version": "1.0.0",
-  "description": "HyperTizen UI with fixed HyperHDR server for Lichtwand",
+  "name": "@robertzollner/ht",
+  "appName": "HT Diagnose",
+  "version": "3.0.0",
+  "description": "HyperTizen Diagnose fuer HyperHDR",
   "packageType": "app",
   "appPath": "index.html",
   "author": "Robert Zollner",
