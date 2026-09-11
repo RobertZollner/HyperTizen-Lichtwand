@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HT Diagnose</title>
+<style>
+body{background:#368bec;color:#fff;font-family:Arial,sans-serif;margin:0;padding:30px}.wrap{max-width:1100px;margin:auto}h1{font-size:48px}.box{background:rgba(0,0,0,.28);border-radius:16px;padding:22px;margin:18px 0;font-size:25px}.ok{color:#9cff9c}.bad{color:#ffd0d0}.wait{color:#fff4a3}#log{white-space:pre-wrap;font-family:monospace;font-size:21px;line-height:1.45}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>HT Diagnose</h1>
+<div class="box"><b>HyperHDR:</b> ws://192.168.178.93:8090/</div>
+<div class="box" id="summary">Starte Tests …</div>
+<div class="box"><div id="log"></div></div>
+</div>
+<script>
+const RPC='ws://192.168.178.93:8090/';
+const logEl=document.getElementById('log');
+const summary=document.getElementById('summary');
+function line(t,c){const d=document.createElement('div');d.textContent=t;if(c)d.className=c;logEl.appendChild(d);}
+function send(ws,obj){try{ws.send(JSON.stringify(obj));}catch(e){line('Senden fehlgeschlagen: '+e.message,'bad');}}
+function testHyperHDR(){
+  return new Promise(resolve=>{
+    line('1. TV → HyperHDR 8090 …','wait');
+    let done=false; const ws=new WebSocket(RPC);
+    const timer=setTimeout(()=>{if(!done){done=true;line('   X Keine Verbindung zu HyperHDR','bad');try{ws.close();}catch(e){} resolve(false);}},5000);
+    ws.onopen=()=>{if(done)return;done=true;clearTimeout(timer);line('   OK HyperHDR erreichbar','ok');try{ws.close();}catch(e){} resolve(true);};
+    ws.onerror=()=>{if(done)return;done=true;clearTimeout(timer);line('   X HyperHDR nicht erreichbar','bad');resolve(false);};
+  });
+}
+function connectService(host,label){
+  return new Promise(resolve=>{
+    line('2. HyperTizen-Dienst '+label+' '+host+':8086 …','wait');
+    let settled=false; const ws=new WebSocket('ws://'+host+':8086/');
+    const timer=setTimeout(()=>{if(!settled){settled=true;line('   X Dienst antwortet nicht','bad');try{ws.close();}catch(e){} resolve(false);}},4000);
+    ws.onopen=()=>{
+      if(settled)return; settled=true; clearTimeout(timer);
+      line('   OK HyperTizen-Dienst verbunden','ok');
+      line('3. Setze Server + aktiviere …','wait');
+      send(ws,{event:0,key:'rpcServer',value:RPC});
+      setTimeout(()=>send(ws,{event:0,key:'enabled',value:'true'}),250);
+      setTimeout(()=>send(ws,{event:1,key:'rpcServer'}),500);
+      setTimeout(()=>send(ws,{event:1,key:'enabled'}),700);
+      let gotRpc=false,gotEnabled=false;
+      ws.onmessage=(ev)=>{
+        try{
+          const m=JSON.parse(ev.data);
+          if(m.Event===2 && m.key==='rpcServer' && !m.error){gotRpc=true;line('   rpcServer = '+m.value,'ok');}
+          if(m.Event===2 && m.key==='enabled' && !m.error){gotEnabled=true;line('   enabled = '+m.value,(m.value==='true'?'ok':'bad'));}
+          if(gotRpc&&gotEnabled){summary.innerHTML='<span class="ok">Konfiguration übertragen.</span><br>Jetzt Foto machen.';}
+        }catch(e){line('   Antwort nicht lesbar','bad');}
+      };
+      resolve(true);
+    };
+    ws.onerror=()=>{if(!settled){settled=true;clearTimeout(timer);line('   X Verbindung fehlgeschlagen','bad');resolve(false);}};
+  });
+}
+async function start(){
+  line('Diagnose geladen.','ok');
+  const hdr=await testHyperHDR();
+  await new Promise(r=>setTimeout(r,1000));
+  let ip='';
+  try{ip=(await (await fetch('http://127.0.0.1:8081')).text()).trim();line('TV-IP: '+ip,'ok');}catch(e){line('TV-IP nicht lesbar','bad');}
+  let svc=false;
+  if(ip) svc=await connectService(ip,'TV-IP');
+  if(!svc){line('Versuche localhost …','wait');svc=await connectService('127.0.0.1','localhost');}
+  if(!svc){summary.innerHTML='<span class="bad">HyperTizen-Dienst auf 8086 nicht erreichbar.</span>';}
+  else if(!hdr){summary.innerHTML='<span class="bad">Dienst läuft, aber HyperHDR nicht erreichbar.</span>';}
+}
+window.onload=start;
+</script>
+</body>
+</html>
