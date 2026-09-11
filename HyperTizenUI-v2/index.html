@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HyperTizen Lichtwand Diagnose</title>
+<style>
+body{background:#368bec;color:#fff;font-family:Arial,sans-serif;margin:0;padding:30px}.wrap{max-width:1100px;margin:auto}h1{font-size:48px}h2{font-size:30px}.box{background:rgba(0,0,0,.28);border-radius:16px;padding:22px;margin:18px 0;font-size:25px}.ok{color:#9cff9c}.bad{color:#ffd0d0}.wait{color:#fff4a3}button{font-size:26px;padding:14px 24px;border:0;border-radius:10px;margin-top:15px}#log{white-space:pre-wrap;font-family:monospace;font-size:21px;line-height:1.45}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>HyperTizen Lichtwand – Diagnose</h1>
+<div class="box"><b>HyperHDR:</b> ws://192.168.178.93:8090/</div>
+<div class="box" id="summary">Starte Tests …</div>
+<div class="box"><div id="log"></div></div>
+<button onclick="location.reload()">Tests wiederholen</button>
+</div>
+<script>
+const RPC='ws://192.168.178.93:8090/';
+const logEl=document.getElementById('log');
+const summary=document.getElementById('summary');
+function line(t,c){const d=document.createElement('div');d.textContent=t;if(c)d.className=c;logEl.appendChild(d);}
+function send(ws,obj){try{ws.send(JSON.stringify(obj));}catch(e){line('Senden fehlgeschlagen: '+e.message,'bad');}}
+function testHyperHDR(){
+  return new Promise(resolve=>{
+    line('1. Teste TV → HyperHDR Port 8090 …','wait');
+    let done=false; const ws=new WebSocket(RPC);
+    const timer=setTimeout(()=>{if(!done){done=true;line('   ✗ Keine Verbindung zu HyperHDR','bad');try{ws.close();}catch(e){} resolve(false);}},5000);
+    ws.onopen=()=>{if(done)return;done=true;clearTimeout(timer);line('   ✓ HyperHDR WebSocket erreichbar','ok');try{ws.close();}catch(e){} resolve(true);};
+    ws.onerror=()=>{if(done)return;done=true;clearTimeout(timer);line('   ✗ HyperHDR WebSocket nicht erreichbar','bad');resolve(false);};
+  });
+}
+function connectService(host,label){
+  return new Promise(resolve=>{
+    line('2. Teste HyperTizen-Dienst über '+label+' ('+host+':8086) …','wait');
+    let settled=false; const ws=new WebSocket('ws://'+host+':8086/');
+    const timer=setTimeout(()=>{if(!settled){settled=true;line('   ✗ HyperTizen-Dienst antwortet dort nicht','bad');try{ws.close();}catch(e){} resolve(false);}},4000);
+    ws.onopen=()=>{
+      if(settled)return; settled=true; clearTimeout(timer);
+      line('   ✓ HyperTizen-Dienst verbunden','ok');
+      line('3. Setze HyperHDR-Adresse fest und aktiviere HyperTizen …','wait');
+      send(ws,{event:0,key:'rpcServer',value:RPC});
+      setTimeout(()=>send(ws,{event:0,key:'enabled',value:'true'}),250);
+      setTimeout(()=>send(ws,{event:1,key:'rpcServer'}),500);
+      setTimeout(()=>send(ws,{event:1,key:'enabled'}),700);
+      let gotRpc=false,gotEnabled=false;
+      ws.onmessage=(ev)=>{
+        try{
+          const m=JSON.parse(ev.data);
+          if(m.Event===2 && m.key==='rpcServer' && !m.error){gotRpc=true;line('   ✓ rpcServer = '+m.value,'ok');}
+          if(m.Event===2 && m.key==='enabled' && !m.error){gotEnabled=true;line('   ✓ enabled = '+m.value,(m.value==='true'?'ok':'bad'));}
+          if(gotRpc&&gotEnabled){summary.innerHTML='<span class="ok">Konfiguration an HyperTizen übertragen.</span><br>Jetzt 10 Sekunden TV-Bild laufen lassen und dann HyperHDR prüfen.';}
+        }catch(e){line('   Antwort nicht lesbar: '+ev.data,'bad');}
+      };
+      resolve(true);
+    };
+    ws.onerror=()=>{if(!settled){settled=true;clearTimeout(timer);line('   ✗ Verbindung fehlgeschlagen','bad');resolve(false);}};
+  });
+}
+async function start(){
+  line('Diagnose-Oberfläche geladen.','ok');
+  const hdr=await testHyperHDR();
+  await new Promise(r=>setTimeout(r,1500));
+  let ip='';
+  try{ip=(await (await fetch('http://127.0.0.1:8081')).text()).trim();line('TizenBrew meldet TV-IP: '+ip,'ok');}catch(e){line('TV-IP über TizenBrew nicht lesbar','bad');}
+  let svc=false;
+  if(ip) svc=await connectService(ip,'TV-IP');
+  if(!svc){line('Versuche HyperTizen lokal über 127.0.0.1 …','wait');svc=await connectService('127.0.0.1','localhost');}
+  if(!svc){summary.innerHTML='<span class="bad">HyperTizen-Dienst auf Port 8086 ist nicht erreichbar.</span>';}
+  else if(!hdr){summary.innerHTML='<span class="bad">HyperTizen-Dienst läuft, aber der TV erreicht HyperHDR nicht.</span>';}
+}
+window.onload=start;
+</script>
+</body>
+</html>
